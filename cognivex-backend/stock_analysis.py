@@ -1,21 +1,34 @@
-"""CR Cognivex Stock Research Lab: indicators for NSE equities.
+"""CR Cognivex Stock Research Lab: indicators for NSE and BSE equities.
 Rule-based technical signals are NOT price forecasts or investment advice.
 """
 from __future__ import annotations
 import math
+import re
 from typing import Any
 import pandas as pd
 
-STOCKS = {
-    1: "RELIANCE.NS", 2: "TCS.NS", 3: "INFY.NS",
-    4: "HDFCBANK.NS", 5: "HINDUNILVR.NS",
-}
 ALLOWED_PERIODS = {"3mo", "6mo", "1y"}
 MIN_BARS = 35
+# Accept Yahoo Finance symbols for Indian NSE and BSE equities.
+# Actual coverage depends on market-data provider availability.
+INDIAN_EQUITY_SYMBOL = re.compile(r"^[A-Z0-9][A-Z0-9&._-]{0,29}\.(?:NS|BO)$")
+
+def validate_ticker(ticker: str) -> str:
+    """Validate Indian equity symbols; unsuffixed tickers default to NSE."""
+    symbol = ticker.strip().upper()
+    if "." not in symbol:
+        symbol += ".NS"
+    if not INDIAN_EQUITY_SYMBOL.fullmatch(symbol):
+        raise ValueError(
+            "Invalid Indian equity ticker. Use an NSE symbol such as ICICIBANK.NS "
+            "or a BSE code such as 500325.BO."
+        )
+    return symbol
 
 def fetch_prices(ticker: str, period: str = "6mo") -> pd.DataFrame:
-    if ticker not in STOCKS.values() or period not in ALLOWED_PERIODS:
-        raise ValueError("Unsupported ticker or period.")
+    ticker = validate_ticker(ticker)
+    if period not in ALLOWED_PERIODS:
+        raise ValueError("Unsupported period; choose 3mo, 6mo or 1y.")
     try:
         import yfinance as yf
         data = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
@@ -26,8 +39,9 @@ def fetch_prices(ticker: str, period: str = "6mo") -> pd.DataFrame:
     return data
 
 def analyze_prices(prices: pd.DataFrame, ticker: str, period: str = "6mo") -> dict[str, Any]:
-    if period not in ALLOWED_PERIODS or ticker not in STOCKS.values():
-        raise ValueError("Unsupported ticker or period.")
+    ticker = validate_ticker(ticker)
+    if period not in ALLOWED_PERIODS:
+        raise ValueError("Unsupported period; choose 3mo, 6mo or 1y.")
     if prices is None or prices.empty:
         raise ValueError("No price history is available.")
     needed = ("High", "Low", "Close")
@@ -88,4 +102,5 @@ def analyze_prices(prices: pd.DataFrame, ticker: str, period: str = "6mo") -> di
     }
 
 def analyze_ticker(ticker: str, period: str = "6mo") -> dict[str, Any]:
+    ticker = validate_ticker(ticker)
     return analyze_prices(fetch_prices(ticker, period), ticker, period)
