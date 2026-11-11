@@ -18,6 +18,12 @@ def validate_ticker(ticker: str) -> str:
     symbol = ticker.strip().upper()
     if "." not in symbol:
         symbol += ".NS"
+    if symbol == "TATAMOTORS.NS":
+        raise ValueError(
+            "TATAMOTORS.NS is an obsolete NSE ticker after the 2025 demerger. "
+            "Use TMPV.NS for Tata Motors Passenger Vehicles or TMCV.NS "
+            "for Tata Motors Commercial Vehicles."
+        )
     if not INDIAN_EQUITY_SYMBOL.fullmatch(symbol):
         raise ValueError(
             "Invalid Indian equity ticker. Use an NSE symbol such as ICICIBANK.NS "
