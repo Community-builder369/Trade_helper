@@ -13,6 +13,8 @@ app.add_middleware(CORSMiddleware,allow_origins=allow_origins,allow_methods=["GE
 _cache: dict[tuple[str,str],tuple[float,dict]] = {}
 CACHE_SECONDS = 900
 MAX_CACHE_ENTRIES = 256
+# Default to no public redistribution until a suitable market-data licence is verified.
+ALLOW_PUBLIC_PRICE_DATA = os.getenv("ALLOW_PUBLIC_PRICE_DATA", "false").lower() in {"yes", "true", "1"}
 
 @app.get("/")
 def index():
@@ -20,7 +22,7 @@ def index():
 
 @app.get("/api/health")
 def health():
-    return {"ok":True,"service":"CR Cognivex Stock Research API"}
+    return {"ok":True,"service":"CR Cognivex Stock Research API","live_price_data_enabled":ALLOW_PUBLIC_PRICE_DATA}
 
 @app.get("/api/stocks")
 def stocks(q: str = Query("", max_length=40), exchange: str = Query("NS"), limit: int = Query(12, ge=1, le=20)):
@@ -33,6 +35,11 @@ def stocks(q: str = Query("", max_length=40), exchange: str = Query("NS"), limit
 
 @app.get("/api/analyze")
 def analyze(ticker: str = Query("RELIANCE.NS"), period: str = Query("6mo")):
+    if not ALLOW_PUBLIC_PRICE_DATA:
+        raise HTTPException(
+            status_code=503,
+            detail="Public market-data delivery is paused pending third-party data-usage permissions. You can upload OHLC CSV data you are authorised to use, or explore the synthetic demo."
+        )
     try:
         ticker = validate_ticker(ticker)
     except ValueError as exc:
