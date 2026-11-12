@@ -44,3 +44,10 @@ The GET `/api/news/stock?ticker=RELIANCE.NS` endpoint maps a selected NSE/BSE ti
 This endpoint intentionally returns HTTP 503 until both `ENABLE_LICENSED_NEWS=true` and `GNEWS_API_KEY` are configured by the service owner **after confirming that the provider plan permits this commercial, public-facing use, including headline display and derived scores**. Don't set these flags for an unlicensed trial/free API key. The application neither scrapes publications nor fabricates a score when the provider fails or finds no relevant news. Only symbols in the curated catalog have a reliable company name for lookup.
 
 Front-end integration: upon stock selection, GET `/api/news/stock?ticker=<selected encoded ticker>`, display `overall_score` (−100 to +100), `overall_label`, `analysed_at`, and the returned article titles, publisher, publication time, and source links; do not ask visitors to paste URLs. Display a data-unavailable state on 503 and an insufficient-evidence state when `overall_score` is null. Debounce stock changes and reject stale responses. Keep article text and links rendered safely, and label the score as rule-based news sentiment, not investment advice.
+
+
+## Persistent GDELT 429: free production alternative
+
+If GDELT's DOC search responds with repeated HTTP 429s, switch to **Free News API** (https://freenewsapi.ai/docs), which officially allows commercial use on the free tier (3,000 requests/month as of November 2026). Create your own free account and API key; keys became mandatory on 1 November 2026.
+
+In the existing Render service, add **FREE_NEWS_API_KEY** as a secret environment variable. With this set, GET `/api/news/stock` automatically uses Free News API instead of GDELT; without it, the existing GDELT integration remains active with cooldown and cache. Do not add the key to Wix JavaScript or GitHub files. Free News API results are cached server-side for one hour to conserve quota. The frontend needs no change; selecting a stock still triggers analysis automatically. A free plan's quotas are not suitable for unlimited high-frequency polling across many customers.
