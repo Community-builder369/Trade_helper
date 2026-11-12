@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from stock_analysis import ALLOWED_PERIODS, analyze_ticker, validate_ticker
 from stock_catalog import search_stocks
 from news_sentiment import NewsSentimentRequest, analyse_news
+from news_fetch import get_stock_news, NewsProviderError
 
 app = FastAPI(title="CR Cognivex Stock Research API", version="1.1.0")
 allow_origins = [s.strip() for s in os.getenv("ALLOWED_ORIGINS", "*").split(",") if s.strip()]
@@ -105,3 +106,16 @@ def news_sentiment(request: Request, payload: NewsSentimentRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return analyse_news(ticker, payload.headlines)
+
+
+@app.get("/api/news/stock")
+def selected_stock_news(request: Request, ticker: str = Query(..., min_length=3, max_length=32)):
+    """Score latest licensed news for the stock selected in the interface."""
+    _limit_analyze_request(request)
+    try:
+        symbol = validate_ticker(ticker)
+        return get_stock_news(symbol)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except NewsProviderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
