@@ -1,79 +1,147 @@
-"""Licensed-provider stock news retrieval. No scraping or market-price access."""
+"""GDELT Project DOC 2.0 company-news retrieval for the CR Cognivex prototype.
+
+Uses only GDELT article-index metadata, never scrapes publisher pages.
+GDELT Project usage: https://www.gdeltproject.org/about.html
+This is not the separate GDELT Cloud commercial product.
+"""
 from __future__ import annotations
+
 import json
-import os
+import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from threading import Lock
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from news_sentiment import Headline, analyse_news
 from stock_catalog import POPULAR_NSE, POPULAR_BSE
 
-_cache = {}
-_lock = Lock()
-TTL_SECONDS = 900
+ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc"
+TTL_SECONDS = 1200
+MIN_QUERY_INTERVAL = 6.0
+_cache: dict[str, tuple[float, dict]] = {}
+_cache_lock = Lock()
+_upstream_lock = Lock()
+_last_query_at = 0.0
 
 class NewsProviderError(RuntimeError):
     pass
 
+
+def _parse_gdelt_date(value: str | None):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _title_mentions_company(title: str, company: str) -> bool:
+    """Don't attribute a story about another company just because search matched its body."""
+    simplified_title = re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+    simplified_company = re.sub(r"[^a-z0-9]+", " ", company.casefold()).strip()
+    if not simplified_company:
+        return False
+    # For ambiguous single words, require a stock-market phrase as context.
+    if " " not in simplified_company:
+        return (bool(re.search(r"\b" + re.escape(simplified_company) + r"\b", simplified_title))
+                and bool(re.search(r"\b(stock|stocks|shares|earnings|profit|revenue|investors|nse|bse)\b", simplified_title)))
+    return bool(re.search(r"\b" + re.escape(simplified_company) + r"\b", simplified_title))
+
+
+def _fetch_gdelt(company: str) -> list[Headline]:
+    global _last_query_at
+    query = '"' + company.replace('"', "") + '" sourcelang:english'
+    params = urlencode({
+        "query": query,
+        "mode": "artlist",
+        "format": "json",
+        "maxrecords": 50,
+        "timespan": "7d",
+        "sort": "datedesc",
+    })
+    # Serialise upstream calls to respect DOC API pacing and avoid bursts.
+    with _upstream_lock:
+        remaining = MIN_QUERY_INTERVAL - (time.monotonic() - _last_query_at)
+        if remaining > 0:
+            time.sleep(remaining)
+        _last_query_at = time.monotonic()
+        req = Request(ENDPOINT + "?" + params, headers={
+            "Accept": "application/json",
+            "User-Agent": "CR-Cognivex-Research/1.0 (GDELT attribution: gdeltproject.org)",
+        })
+        try:
+            with urlopen(req, timeout=12) as response:
+                if "json" not in response.headers.get("Content-Type", "").lower():
+                    raise NewsProviderError("GDELT returned a non-JSON response.")
+                payload = json.load(response)
+        except HTTPError as exc:
+            raise NewsProviderError(f"GDELT news search unavailable (HTTP {exc.code}).") from exc
+        except (URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+            raise NewsProviderError("GDELT news search is temporarily unavailable.") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("articles", []), list):
+        raise NewsProviderError("GDELT returned an unexpected result format.")
+    articles: list[Headline] = []
+    seen: set[str] = set()
+    for item in payload.get("articles", []):
+        if not isinstance(item, dict):
+            continue
+        title, link = item.get("title"), item.get("url")
+        if not isinstance(title, str) or not isinstance(link, str):
+            continue
+        title = " ".join(title.split())
+        if not _title_mentions_company(title, company):
+            continue
+        try:
+            parsed = urlsplit(link)
+            if parsed.scheme != "https" or not parsed.hostname or link in seen:
+                continue
+            article = Headline(
+                title=title[:240],
+                source_url=link,
+                publisher=(item.get("domain") or parsed.hostname)[:100],
+                published_at=_parse_gdelt_date(item.get("seendate")),
+            )
+        except (ValueError, TypeError):
+            continue
+        articles.append(article)
+        seen.add(link)
+        if len(articles) >= 10:
+            break
+    return articles
+
+
 def get_stock_news(ticker: str) -> dict:
-    """Return scored news for a selected known symbol, using an authorised GNews plan."""
-    if os.getenv("ENABLE_LICENSED_NEWS", "").lower() not in {"true", "1", "yes"}:
-        raise NewsProviderError("Automatic news lookup is not enabled until a commercial news-data licence is confirmed.")
-    key = os.getenv("GNEWS_API_KEY", "").strip()
-    if not key:
-        raise NewsProviderError("Licensed news provider credentials have not been configured.")
+    """Fetch source-linked GDELT article metadata and score financial headline language."""
     symbol, exchange = ticker.rsplit(".", 1)
     catalog = POPULAR_NSE if exchange == "NS" else POPULAR_BSE
     company = catalog.get(symbol)
     if not company:
-        raise ValueError("Automatic news lookup currently supports stocks in the curated company directory.")
+        raise ValueError("Automatic news lookup currently supports the curated company directory.")
     now = time.monotonic()
-    with _lock:
-        cached = _cache.get(ticker)
-        if cached and now - cached[0] < TTL_SECONDS:
-            return cached[1]
-    params = urlencode({
-        "q": f'"{company}"', "lang": "en", "max": 10, "sortby": "publishedAt",
-        "from": (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "apikey": key,
+    with _cache_lock:
+        entry = _cache.get(ticker)
+        if entry and now - entry[0] < TTL_SECONDS:
+            return entry[1]
+    headlines = _fetch_gdelt(company)
+    result = analyse_news(ticker, headlines)
+    result.update({
+        "company": company,
+        "source": "GDELT Project DOC 2.0",
+        "source_attribution": "https://www.gdeltproject.org/",
+        "lookback_days": 7,
+        "status": "ok" if headlines else "no_recent_news",
     })
-    req = Request("https://gnews.io/api/v4/search?" + params,
-                  headers={"Accept": "application/json", "User-Agent": "CR-Cognivex/1.0"})
-    try:
-        with urlopen(req, timeout=8) as response:
-            payload = json.load(response)
-    except HTTPError as exc:
-        raise NewsProviderError("News provider rejected the request or its quota was reached.") from exc
-    except (URLError, TimeoutError, ValueError, OSError) as exc:
-        raise NewsProviderError("News provider is temporarily unavailable.") from exc
-    articles = []
-    seen = set()
-    for item in payload.get("articles", [])[:20]:
-        title, url = item.get("title"), item.get("url")
-        if not isinstance(title, str) or not isinstance(url, str) or url in seen:
-            continue
-        try:
-            article = Headline(title=title, source_url=url,
-                               publisher=(item.get("source") or {}).get("name"),
-                               published_at=item.get("publishedAt"))
-        except (ValueError, TypeError):
-            continue
-        articles.append(article)
-        seen.add(url)
-        if len(articles) == 10:
-            break
-    result = analyse_news(ticker, articles)
-    result["company"] = company
-    result["source"] = "GNews licensed API"
-    result["lookback_days"] = 7
-    result["status"] = "ok" if articles else "no_recent_news"
-    result["disclaimer"] += " News reflects provider coverage, not all publications."
-    with _lock:
-        if len(_cache) >= 256:
+    result["disclaimer"] += (
+        " News index: GDELT Project. Coverage may be incomplete. "
+        "Only headlines naming the selected company are used; "
+        "headlines do not prove market impact. Original articles remain with publishers."
+    )
+    with _cache_lock:
+        if len(_cache) >= 250:
             _cache.clear()
-        _cache[ticker] = (now, result)
+        _cache[ticker] = (time.monotonic(), result)
     return result
