@@ -5,6 +5,7 @@ import time
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from stock_analysis import ALLOWED_PERIODS, analyze_ticker, validate_ticker
+from stock_catalog import search_stocks
 
 app = FastAPI(title="CR Cognivex Stock Research API", version="1.1.0")
 allow_origins = [s.strip() for s in os.getenv("ALLOWED_ORIGINS", "*").split(",") if s.strip()]
@@ -20,6 +21,15 @@ def index():
 @app.get("/api/health")
 def health():
     return {"ok":True,"service":"CR Cognivex Stock Research API"}
+
+@app.get("/api/stocks")
+def stocks(q: str = Query("", max_length=40), exchange: str = Query("NS"), limit: int = Query(12, ge=1, le=20)):
+    """Mobile-friendly symbol and company-name autocomplete (not a quote endpoint)."""
+    try:
+        return search_stocks(q, exchange, limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
 
 @app.get("/api/analyze")
 def analyze(ticker: str = Query("RELIANCE.NS"), period: str = Query("6mo")):
