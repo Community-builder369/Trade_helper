@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from threading import Lock
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -16,6 +18,9 @@ from stock_catalog import POPULAR_NSE, POPULAR_BSE
 from news_fetch import NewsProviderError, _title_mentions_company
 
 URL = "https://freenewsapi.ai/v1/search"
+_free_cache = {}
+_free_cache_lock = Lock()
+_free_refresh_seconds = 3600
 
 
 def get_free_news(ticker: str) -> dict:
@@ -26,6 +31,10 @@ def get_free_news(ticker: str) -> dict:
     company = (POPULAR_NSE if suffix == "NS" else POPULAR_BSE).get(symbol)
     if not company:
         raise ValueError("Selected stock is not yet in our curated news directory.")
+    with _free_cache_lock:
+        cached = _free_cache.get(ticker)
+        if cached and time.monotonic() - cached[0] < _free_refresh_seconds:
+            return cached[1]
     params = urlencode({
         "q": company,
         "date": "7d",
@@ -96,4 +105,8 @@ def get_free_news(ticker: str) -> dict:
         " News index: Free News API. Coverage is incomplete. "
         "Only matching source headlines are scored; scores do not predict share prices."
     )
+    with _free_cache_lock:
+        if len(_free_cache) >= 250:
+            _free_cache.clear()
+        _free_cache[ticker] = (time.monotonic(), response)
     return response
