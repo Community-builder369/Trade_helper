@@ -10,6 +10,7 @@ from stock_analysis import ALLOWED_PERIODS, analyze_ticker, validate_ticker
 from stock_catalog import search_stocks
 from news_sentiment import NewsSentimentRequest, analyse_news
 from news_fetch import get_stock_news, NewsProviderError
+from free_news_api import get_free_news
 
 app = FastAPI(title="CR Cognivex Stock Research API", version="1.1.0")
 allow_origins = [s.strip() for s in os.getenv("ALLOWED_ORIGINS", "*").split(",") if s.strip()]
@@ -114,6 +115,8 @@ def selected_stock_news(request: Request, ticker: str = Query(..., min_length=3,
     _limit_analyze_request(request)
     try:
         symbol = validate_ticker(ticker)
+        if os.getenv('FREE_NEWS_API_KEY', '').strip():
+            return get_free_news(symbol)
         return get_stock_news(symbol)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
