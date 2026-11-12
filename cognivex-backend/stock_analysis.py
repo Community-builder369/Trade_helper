@@ -7,7 +7,7 @@ import re
 from typing import Any
 import pandas as pd
 
-ALLOWED_PERIODS = {"3mo", "6mo", "1y"}
+ALLOWED_PERIODS = {"1mo", "3mo", "6mo"}
 MIN_BARS = 35
 # Accept Yahoo Finance symbols for Indian NSE and BSE equities.
 # Actual coverage depends on market-data provider availability.
@@ -34,10 +34,12 @@ def validate_ticker(ticker: str) -> str:
 def fetch_prices(ticker: str, period: str = "6mo") -> pd.DataFrame:
     ticker = validate_ticker(ticker)
     if period not in ALLOWED_PERIODS:
-        raise ValueError("Unsupported period; choose 3mo, 6mo or 1y.")
+        raise ValueError("Unsupported period; choose 1mo, 3mo or 6mo.")
     try:
         import yfinance as yf
-        data = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
+        # Fetch extra prices only to warm up EMA26 and MACD for one-month analysis.
+        fetch_period = "3mo" if period == "1mo" else period
+        data = yf.Ticker(ticker).history(period=fetch_period, interval="1d", auto_adjust=True)
     except Exception as exc:
         raise RuntimeError(f"Market data provider could not retrieve {ticker}: {exc}") from exc
     if data is None or data.empty:
@@ -47,7 +49,7 @@ def fetch_prices(ticker: str, period: str = "6mo") -> pd.DataFrame:
 def analyze_prices(prices: pd.DataFrame, ticker: str, period: str = "6mo") -> dict[str, Any]:
     ticker = validate_ticker(ticker)
     if period not in ALLOWED_PERIODS:
-        raise ValueError("Unsupported period; choose 3mo, 6mo or 1y.")
+        raise ValueError("Unsupported period; choose 1mo, 3mo or 6mo.")
     if prices is None or prices.empty:
         raise ValueError("No price history is available.")
     needed = ("High", "Low", "Close")
@@ -69,15 +71,23 @@ def analyze_prices(prices: pd.DataFrame, ticker: str, period: str = "6mo") -> di
     lower = df.Low.rolling(14, min_periods=14).min()
     spread = (upper - lower).replace(0, float("nan"))
     df["Williams %R"] = -100 * (upper - df.Close) / spread
-    high = float(df.High.max())
-    low = float(df.Low.min())
+    # Indicators use the available warm-up history, while price range, Fibonacci
+    # levels and chart reflect only the selected one-month display window.
+    window = df
+    if period == "1mo":
+        cutoff = df.index[-1] - pd.DateOffset(months=1)
+        window = df.loc[df.index >= cutoff]
+        if len(window) < 12:
+            raise ValueError("Not enough recent sessions in the one-month window.")
+    high = float(window.High.max())
+    low = float(window.Low.min())
     if not math.isfinite(high-low) or high <= low:
         raise ValueError("Fibonacci levels undefined for flat price history.")
     fib = {label: round(high-(high-low)*frac,4) for label,frac in [
         ("0.0%",0),("23.6%",.236),("38.2%",.382),("50.0%",.5),
         ("61.8%",.618),("78.6%",.786),("100.0%",1)
     ]}
-    latest = df.iloc[-1]
+    latest = window.iloc[-1]
     price, macd, signal, wr = (float(latest[c]) for c in ("Close","MACD","Signal","Williams %R"))
     def direction(v: float, comparison: float) -> str:
         if not math.isfinite(v): return "unavailable"
@@ -94,12 +104,12 @@ def analyze_prices(prices: pd.DataFrame, ticker: str, period: str = "6mo") -> di
          "close":round(float(row["Close"]),4),
          "macd":round(float(row["MACD"]),5),
          "signal":round(float(row["Signal"]),5)}
-        for t,row in df.tail(100).iterrows()
+        for t,row in window.tail(100).iterrows()
     ]
     return {
         "ticker":ticker,"period":period,
-        "as_of":pd.Timestamp(df.index[-1]).date().isoformat(),
-        "observations":len(df),"currency":"INR","price":round(price,4),
+        "as_of":pd.Timestamp(window.index[-1]).date().isoformat(),
+        "observations":len(window),"currency":"INR","price":round(price,4),
         "indicators":{"macd":round(macd,5),"signal":round(signal,5),
             "williams_r":round(wr,4) if math.isfinite(wr) else None,
             "williams_zone":wr_zone},
