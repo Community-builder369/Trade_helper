@@ -38,7 +38,7 @@ def analyze(ticker: str = Query("RELIANCE.NS"), period: str = Query("6mo")):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if period not in ALLOWED_PERIODS:
-        raise HTTPException(status_code=400,detail="Choose 3mo, 6mo or 1y.")
+        raise HTTPException(status_code=400,detail="Choose 1mo, 3mo or 6mo.")
     key=(ticker,period)
     entry=_cache.get(key)
     if entry and time.monotonic()-entry[0]<CACHE_SECONDS:
