@@ -1,15 +1,37 @@
-# CR Cognivex — NSE Stock Research API
+# CR Cognivex — Stock Research and News Sentiment API
 
-A FastAPI backend for the CR Cognivex Wix Stock Research Lab. Read-only endpoint, 15-minute in-memory cache, five whitelisted NSE symbols.
+FastAPI backend for the CR Cognivex Wix Stock Research Lab, running on Render.
 
-Endpoints:
-- GET /api/health
-- GET /api/analyze?ticker=RELIANCE.NS&period=6mo
-- GET /
+## Endpoints
+- GET /api/health — service health and stock-data permission flag
+- GET /api/stocks?q=RELIANCE — curated example symbols, **not exchange data**
+- GET /api/analyze?ticker=RELIANCE.NS&period=6mo — **disabled by default** until appropriate public market-data permissions are in place
+- POST /api/news/sentiment — simple, explainable sentiment analysis of supplied / licensed financial news headlines (no fetching or scraping)
+- GET /docs — interactive API schema
 
-Render service settings (branch `cr-cognivex-market-api`):
+### News sentiment request
+
+```json
+{
+  "ticker": "INFY.NS",
+  "headlines": [
+    {
+      "title": "Company profit rises as revenue grows",
+      "source_url": "https://example.com/news/article",
+      "publisher": "Example Publisher"
+    }
+  ]
+}
+```
+
+The response contains `overall_label`, `overall_score` (from -100 to +100, or null when insufficient evidence), `headlines_scored`, and per-headline `signals`. **This is a keyword/phrase-based heuristic prototype, NOT a trained AI model, calibrated confidence, future price forecast or investment advice.** It does not check company relevance, event accuracy, source reliability or actual market impact.
+
+Only send headlines and links from sources whose terms allow the intended commercial analysis. No external news feeds are queried and the server does not retain the supplied headlines. Production ingestion needs a licensed news provider, authentication and stronger persistence/rate controls.
+
+## Render service
+- Branch: `cr-cognivex-market-api`
 - Build: `cd cognivex-backend && pip install -r requirements.txt`
 - Start: `cd cognivex-backend && uvicorn app:app --host 0.0.0.0 --port $PORT`
 - Health: `/api/health`
 
-Warning: This reports rule-based technical indicators, not reliable forecasts. Yahoo Finance data may be delayed or unavailable. Review market data licensing and API abuse protections before public high-volume use.
+The stock-price endpoint remains gated by `ALLOW_PUBLIC_PRICE_DATA=false` until data licensing is verified. Live UI integration and notifications are separate follow-on work.
