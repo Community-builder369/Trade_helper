@@ -82,7 +82,6 @@ POPULAR_NSE = {
     "IRCTC": "Indian Railway Catering & Tourism Corporation",
     "IRFC": "Indian Railway Finance Corporation",
     "RVNL": "Rail Vikas Nigam",
-    "ZOMATO": "Eternal (formerly Zomato)",
     "ETERNAL": "Eternal",
     "DMART": "Avenue Supermarts",
     "TRENT": "Trent",
@@ -179,8 +178,8 @@ def search_stocks(query: str, exchange: str = "NS", limit: int = 12) -> dict:
     now = time.monotonic()
     with _lock:
         if (exchange == "NS" and not _refresh_in_progress
-                and now - _refresh_requested_at >
-                  (CACHE_SECONDS if _last_success_at else RETRY_SECONDS)):
+                and (_refresh_requested_at == 0 or now - _refresh_requested_at >
+                     (CACHE_SECONDS if _last_success_at else RETRY_SECONDS))):
             _refresh_in_progress = True
             _refresh_requested_at = now
             threading.Thread(target=_refresh_nse, daemon=True).start()
