@@ -8,10 +8,11 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from stock_analysis import ALLOWED_PERIODS, analyze_ticker, validate_ticker
 from stock_catalog import search_stocks
+from news_sentiment import NewsSentimentRequest, analyse_news
 
 app = FastAPI(title="CR Cognivex Stock Research API", version="1.1.0")
 allow_origins = [s.strip() for s in os.getenv("ALLOWED_ORIGINS", "*").split(",") if s.strip()]
-app.add_middleware(CORSMiddleware,allow_origins=allow_origins,allow_methods=["GET"],allow_headers=["*"])
+app.add_middleware(CORSMiddleware,allow_origins=allow_origins,allow_methods=["GET","POST"],allow_headers=["*"])
 _cache: dict[tuple[str,str],tuple[float,dict]] = {}
 CACHE_SECONDS = 900
 MAX_CACHE_ENTRIES = 256
@@ -94,3 +95,13 @@ def analyze(request: Request, ticker: str = Query("RELIANCE.NS"), period: str = 
     if len(_cache) > MAX_CACHE_ENTRIES:
         _cache.pop(next(iter(_cache)))
     return result
+
+@app.post("/api/news/sentiment")
+def news_sentiment(request: Request, payload: NewsSentimentRequest):
+    """Analyse user-supplied or licensed financial headlines. No news fetching."""
+    _limit_analyze_request(request)
+    try:
+        ticker = validate_ticker(payload.ticker)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return analyse_news(ticker, payload.headlines)
